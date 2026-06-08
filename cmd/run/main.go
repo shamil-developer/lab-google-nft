@@ -208,10 +208,90 @@ func main() {
 	}
 
 	// ----------------------------------------------------
-	// ШАГ 5: Ждем ENTER перед завершением
+	// ШАГ 5: Ждем ENTER перед удалением правила
 	// ----------------------------------------------------
 	go func() {
-		fmt.Println("\n[ПАУЗА 4] Нажми ENTER, чтобы завершить программу и удалить интерфейсы...")
+		fmt.Println("\n[ПАУЗА 4] Нажми ENTER, чтобы удалить правило (TCP dst 443 VNI 100)...")
+		_, _ = fmt.Scanln()
+		userSteps <- struct{}{}
+	}()
+
+	select {
+	case <-userSteps:
+	case sig := <-sigs:
+		slog.Warn("Программа прервана пользователем!", "сигнал", sig)
+		return
+	}
+
+	duplicateRule := application.DeleteRuleRequest{
+		VNI: 100,
+		Rule: application.Rule{
+			Protocol:        application.ProtocolTCP,
+			DestinationPort: ptr(uint32(443)),
+			Action:          application.ActionAllow,
+		},
+	}
+
+	// Удаляем правило первый раз — должно успешно удалиться
+	slog.Info("--- Удаляем правило #1 ---")
+	if err := filterProvider.DeleteRule(ctx, duplicateRule); err != nil {
+		slog.Error("DeleteRule #1 failed", "error", err)
+	} else {
+		slog.Info("DeleteRule #1 успешно")
+	}
+
+	// ----------------------------------------------------
+	// ШАГ 6: Ждем ENTER перед повторным удалением
+	// ----------------------------------------------------
+	go func() {
+		fmt.Println("\n[ПАУЗА 5] Нажми ENTER, чтобы попробовать удалить то же правило повторно...")
+		_, _ = fmt.Scanln()
+		userSteps <- struct{}{}
+	}()
+
+	select {
+	case <-userSteps:
+	case sig := <-sigs:
+		slog.Warn("Программа прервана пользователем!", "сигнал", sig)
+		return
+	}
+
+	// Удаляем правило второй раз — правило уже удалено, должен быть лог а не ошибка
+	slog.Info("--- Удаляем правило #2 (повторно) ---")
+	if err := filterProvider.DeleteRule(ctx, duplicateRule); err != nil {
+		slog.Error("DeleteRule #2 failed", "error", err)
+	} else {
+		slog.Info("DeleteRule #2 успешно (правило уже было удалено)")
+	}
+
+	// ----------------------------------------------------
+	// ШАГ 7: Ждем ENTER перед чисткой VRF 100
+	// ----------------------------------------------------
+	go func() {
+		fmt.Println("\n[ПАУЗА 6] Нажми ENTER, чтобы очистить все правила для VNI 100...")
+		_, _ = fmt.Scanln()
+		userSteps <- struct{}{}
+	}()
+
+	select {
+	case <-userSteps:
+	case sig := <-sigs:
+		slog.Warn("Программа прервана пользователем!", "сигнал", sig)
+		return
+	}
+
+	slog.Info("--- Чистим все firewall-правила для VNI 100 ---")
+	if err := filterProvider.CleanupVRFRules(ctx, application.CleanupVRFRulesRequest{VNI: 100}); err != nil {
+		slog.Error("CleanupVRFRules failed", "error", err)
+	} else {
+		slog.Info("CleanupVRFRules для VNI 100 завершён успешно")
+	}
+
+	// ----------------------------------------------------
+	// ШАГ 8: Ждем ENTER перед завершением
+	// ----------------------------------------------------
+	go func() {
+		fmt.Println("\n[ПАУЗА 7] Нажми ENTER, чтобы завершить программу и удалить интерфейсы...")
 		_, _ = fmt.Scanln()
 		userSteps <- struct{}{}
 	}()
