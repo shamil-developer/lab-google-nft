@@ -11,7 +11,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Имя цепочки фильтрации внутри каждой VRF-таблицы
 var actionToVerdict = map[application.Action]expr.VerdictKind{
 	application.ActionAllow: expr.VerdictAccept,
 	application.ActionDrop:  expr.VerdictDrop,
@@ -34,31 +33,12 @@ func tableName(vni uint32) string {
 // NfrTrafficFilterProvider реализует интерфейс application.TrafficFilterProvider
 type NfrTrafficFilterProvider struct {
 	conn *nftables.Conn
-	cfg  Config
 }
 
-// NewProvider создает новый экземпляр провайдера с конфигурацией по умолчанию
-func NewProvider() *NfrTrafficFilterProvider {
-	return NewProviderWithConfig(DefaultConfig())
-}
-
-// NewProviderWithConfig создает новый экземпляр провайдера с указанной конфигурацией
-func NewProviderWithConfig(cfg Config) *NfrTrafficFilterProvider {
-	conn, err := nftables.New()
-	if err != nil {
-		panic("failed to create nftables connection: " + err.Error())
-	}
-	return &NfrTrafficFilterProvider{conn: conn, cfg: cfg}
-}
-
-// Config возвращает текущую конфигурацию провайдера
-func (p *NfrTrafficFilterProvider) Config() Config {
-	return p.cfg
-}
-
-// Close закрывает соединение с nftables
-func (p *NfrTrafficFilterProvider) Close() error {
-	return p.conn.CloseLasting()
+// NewProviderWithConn создаёт провайдер с готовым nftables-соединением.
+// conn должен быть создан снаружи: nftables.New() для прода.
+func NewProviderWithConn(conn *nftables.Conn) *NfrTrafficFilterProvider {
+	return &NfrTrafficFilterProvider{conn: conn}
 }
 
 // buildRuleExprs строит список nftables-выражений из нашего Rule

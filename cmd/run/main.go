@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/google/nftables"
 	"github.com/shamil-developer/lab-google-nft/internal/application"
 	trafficfilter "github.com/shamil-developer/lab-google-nft/internal/infrastructure/traffic_filter"
 )
@@ -127,10 +128,12 @@ func main() {
 
 	ctx := context.Background()
 
-	cfg := trafficfilter.Config{
-		NetlinkSocket: "/run/nftables.sock", // стандартный путь сокета nftables в Linux
+	conn, err := nftables.New()
+	if err != nil {
+		slog.Error("Failed to create nftables connection", "error", err)
+		return
 	}
-	filterProvider := trafficfilter.NewProviderWithConfig(cfg)
+	filterProvider := trafficfilter.NewProviderWithConn(conn)
 
 	type testRule struct {
 		vni  uint32
@@ -193,7 +196,7 @@ func main() {
 	}
 
 	// Пробуем добавить такое же правило повторно — должны поймать ошибку "rule already exists"
-	err := filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{
+	err = filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{
 		VNI: 100,
 		Rule: application.Rule{
 			Protocol:        application.ProtocolTCP,
