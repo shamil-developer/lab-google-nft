@@ -20,20 +20,9 @@ func (p *NfrTrafficFilterProvider) DeleteRule(ctx context.Context, req applicati
 		return fmt.Errorf("table %s not found: %w", tableName(req.VNI), err)
 	}
 
-	chains, err := p.conn.ListChains()
+	chain, err := p.conn.ListChain(table, chainName)
 	if err != nil {
-		return fmt.Errorf("list chains: %w", err)
-	}
-
-	var chain *nftables.Chain
-	for _, c := range chains {
-		if c.Table.Name == table.Name && c.Table.Family == table.Family {
-			chain = c
-			break
-		}
-	}
-	if chain == nil {
-		return fmt.Errorf("no chain found in table %s", table.Name)
+		return fmt.Errorf("chain %s not found in table %s: %w", chainName, table.Name, err)
 	}
 
 	existingRules, err := p.conn.GetRules(table, chain)

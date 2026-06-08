@@ -28,3 +28,9 @@ sudo ip link del vxlan100
 sudo ip link del vrf-client-b
 sudo ip link del vxlan200
 ```
+
+## NFT таблицы
+
+```bash
+sudo nft list tables
+```
