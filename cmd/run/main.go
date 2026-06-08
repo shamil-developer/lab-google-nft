@@ -111,11 +111,27 @@ func main() {
 	// ШАГ 3: Началась основная логика работы кода на го
 	// ----------------------------------------------------
 
-	var ctx context.Context = context.Background()
+	var _ context.Context = context.Background() // ctx для будущего использования
 
-	var filterProvider application.TrafficFilterProvider = trafficfilter.NewProvider()
+	cfg := trafficfilter.Config{
+		NetlinkSocket: "/run/nftables.sock", // стандартный путь сокета nftables в Linux
+	}
+	var filterProvider application.TrafficFilterProvider = trafficfilter.NewProviderWithConfig(cfg)
 
-	filterProvider.DeleteRule(ctx, application.DeleteRuleRequest{})
+	_ = filterProvider
+
+	// Пример использования:
+	// filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{
+	// 	VNI: 100,
+	// 	Rule: application.Rule{
+	// 		Protocol:     application.ProtocolTCP,
+	// 		SourcePrefix: "10.0.0.0/24",
+	// 		Action:       application.ActionAllow,
+	// 	},
+	// })
+
+	// filterProvider.DeleteRule(ctx, application.DeleteRuleRequest{})
+	// filterProvider.CleanupVRFRules(ctx, application.CleanupVRFRulesRequest{VNI: 100})
 
 	// Конец main. Сейчас автоматически вызовется функция cleanup() из defer
 }
