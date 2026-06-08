@@ -132,19 +132,48 @@ func main() {
 	}
 	filterProvider := trafficfilter.NewProviderWithConfig(cfg)
 
-	// Создаём тестовое правило для VRF клиента А (VNI 100) — разрешаем TCP на порт 443
-	err := filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{
-		VNI: 100,
-		Rule: application.Rule{
-			Protocol:        application.ProtocolTCP,
-			DestinationPort: ptr(uint32(443)),
-			Action:          application.ActionAllow,
-		},
-	})
-	if err != nil {
-		slog.Error("ApplyRule #1 failed", "error", err)
-	} else {
-		slog.Info("Правило #1 успешно создано для VRF клиента А")
+	type testRule struct {
+		vni  uint32
+		rule application.Rule
+	}
+
+	rules := []testRule{
+		// VRF А (VNI 100):
+		// TCP dst port 443, accept
+		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, DestinationPort: ptr(uint32(443)), Action: application.ActionAllow}},
+		// TCP dst port 80, accept
+		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, DestinationPort: ptr(uint32(80)), Action: application.ActionAllow}},
+		// UDP src port 53, accept
+		{vni: 100, rule: application.Rule{Protocol: application.ProtocolUDP, SourcePort: ptr(uint32(53)), Action: application.ActionAllow}},
+		// ICMP, drop
+		{vni: 100, rule: application.Rule{Protocol: application.ProtocolICMP, Action: application.ActionDrop}},
+		// TCP src 10.0.0.0/24, accept
+		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, SourcePrefix: "10.0.0.0/24", Action: application.ActionAllow}},
+		// UDP dst 192.168.1.0/24, drop
+		{vni: 100, rule: application.Rule{Protocol: application.ProtocolUDP, DestinationPrefix: "192.168.1.0/24", Action: application.ActionDrop}},
+		// TCP src port 8080 + dst 10.10.0.0/16, accept
+		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, SourcePort: ptr(uint32(8080)), DestinationPrefix: "10.10.0.0/16", Action: application.ActionAllow}},
+		// TCP dst port 22, accept
+		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, DestinationPort: ptr(uint32(22)), Action: application.ActionAllow}},
+
+		// VRF Б (VNI 200):
+		// TCP dst port 443, accept
+		{vni: 200, rule: application.Rule{Protocol: application.ProtocolTCP, DestinationPort: ptr(uint32(443)), Action: application.ActionAllow}},
+		// UDP dst port 1194, accept
+		{vni: 200, rule: application.Rule{Protocol: application.ProtocolUDP, DestinationPort: ptr(uint32(1194)), Action: application.ActionAllow}},
+		// TCP src 172.16.0.0/12, drop
+		{vni: 200, rule: application.Rule{Protocol: application.ProtocolTCP, SourcePrefix: "172.16.0.0/12", Action: application.ActionDrop}},
+	}
+
+	slog.Info("--- Начинаем создание набора правил ---")
+
+	for i, tr := range rules {
+		err := filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{VNI: tr.vni, Rule: tr.rule})
+		if err != nil {
+			slog.Error("ApplyRule failed", "num", i+1, "vni", tr.vni, "error", err)
+		} else {
+			slog.Info("Правило создано", "num", i+1, "vni", tr.vni)
+		}
 	}
 
 	// ----------------------------------------------------
@@ -164,7 +193,7 @@ func main() {
 	}
 
 	// Пробуем добавить такое же правило повторно — должны поймать ошибку "rule already exists"
-	err = filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{
+	err := filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{
 		VNI: 100,
 		Rule: application.Rule{
 			Protocol:        application.ProtocolTCP,
@@ -173,9 +202,9 @@ func main() {
 		},
 	})
 	if err != nil {
-		slog.Error("ApplyRule #2 failed (ожидаемо)", "error", err)
+		slog.Error("ApplyRule дубликат failed (ожидаемо)", "error", err)
 	} else {
-		slog.Info("Правило #2 успешно создано для VRF клиента А")
+		slog.Info("ApplyRule дубликат создан (неожиданно)")
 	}
 
 	// ----------------------------------------------------
