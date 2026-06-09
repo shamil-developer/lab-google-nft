@@ -30,10 +30,10 @@ func (p *NfrTrafficFilterProvider) DeleteRule(ctx context.Context, req applicati
 		return fmt.Errorf("get rules: %w", err)
 	}
 
-	targetExprs := p.buildRuleExprs(req.Rule)
+	targetExprs := buildRuleExprs(req.Rule)
 	var foundRule *nftables.Rule
 	for _, r := range existingRules {
-		if p.exprsEqual(r.Exprs, targetExprs) {
+		if exprsEqual(r.Exprs, targetExprs) {
 			foundRule = r
 			break
 		}

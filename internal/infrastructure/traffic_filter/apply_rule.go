@@ -29,14 +29,17 @@ func (p *NfrTrafficFilterProvider) ApplyRule(ctx context.Context, req applicatio
 		return fmt.Errorf("get rules: %w", err)
 	}
 
-	if p.ruleExists(existingRules, req.Rule) {
-		return fmt.Errorf("rule already exists")
+	targetExprs := buildRuleExprs(req.Rule)
+	for _, r := range existingRules {
+		if exprsEqual(r.Exprs, targetExprs) {
+			return fmt.Errorf("rule already exists")
+		}
 	}
 
 	rule := &nftables.Rule{
 		Table: table,
 		Chain: chain,
-		Exprs: p.buildRuleExprs(req.Rule),
+		Exprs: buildRuleExprs(req.Rule),
 	}
 
 	p.conn.AddRule(rule)
