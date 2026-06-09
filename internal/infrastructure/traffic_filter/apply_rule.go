@@ -29,9 +29,17 @@ func (p *NfrTrafficFilterProvider) ApplyRule(ctx context.Context, req applicatio
 		return fmt.Errorf("get rules: %w", err)
 	}
 
-	targetExprs := buildRuleExprs(req.Rule)
+	targetExprs, err := buildRuleExprs(req.Rule)
+	if err != nil {
+		return fmt.Errorf("build rule exprs: %w", err)
+	}
+
 	for _, r := range existingRules {
-		if exprsEqual(r.Exprs, targetExprs) {
+		equal, err := exprsEqual(r.Exprs, targetExprs)
+		if err != nil {
+			return fmt.Errorf("compare rule exprs: %w", err)
+		}
+		if equal {
 			return fmt.Errorf("rule already exists")
 		}
 	}
@@ -39,7 +47,7 @@ func (p *NfrTrafficFilterProvider) ApplyRule(ctx context.Context, req applicatio
 	rule := &nftables.Rule{
 		Table: table,
 		Chain: chain,
-		Exprs: buildRuleExprs(req.Rule),
+		Exprs: targetExprs,
 	}
 
 	p.conn.AddRule(rule)

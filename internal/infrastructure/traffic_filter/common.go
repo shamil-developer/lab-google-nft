@@ -1,10 +1,12 @@
 package trafficfilter
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
 
+	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"github.com/shamil-developer/lab-google-nft/internal/application"
 	"golang.org/x/sys/unix"
@@ -21,7 +23,14 @@ var protoToByte = map[application.Protocol]byte{
 	application.ProtocolICMP: unix.IPPROTO_ICMP,
 }
 
-const chainName = "filterchain"
+const (
+	chainName                    = "filterchain"
+	matchRegister         uint32 = 1
+	maxPort                      = 65535
+	portLen               uint32 = 2
+	sourcePortOffset             = 0
+	destinationPortOffset        = 2
+)
 
 func tableName(vni uint32) string {
 	return fmt.Sprintf("vrd-%d-filter", vni)
@@ -42,159 +51,181 @@ var (
 type ipMatchType int
 
 const (
-	ipMatchSource      ipMatchType = iota
+	ipMatchSource ipMatchType = iota
 	ipMatchDestination
 )
 
-func detectIPVersion(ip net.IP) ipVersion {
-	if ip.To4() != nil {
-		return ipv4
-	}
-	return ipv6
-}
-
-func buildRuleExprs(r application.Rule) []expr.Any {
+func buildRuleExprs(r application.Rule) ([]expr.Any, error) {
 	var exprs []expr.Any
 
 	if r.Protocol != application.ProtocolUnspecified {
-		protoByte := protoToByte[r.Protocol]
+		protoByte, ok := protoToByte[r.Protocol]
+		if !ok {
+			return nil, fmt.Errorf("unsupported protocol: %d", r.Protocol)
+		}
 
 		exprs = append(exprs,
-			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: matchRegister},
 			&expr.Cmp{
 				Op:       expr.CmpOpEq,
-				Register: 1,
+				Register: matchRegister,
 				Data:     []byte{protoByte},
 			},
 		)
 	}
 
 	if r.SourcePrefix != "" {
-		exprs = append(exprs, buildIPMatch(expr.PayloadBaseNetworkHeader, ipMatchSource, r.SourcePrefix, expr.CmpOpEq)...)
+		ipExprs, err := buildIPMatch(ipMatchSource, r.SourcePrefix)
+		if err != nil {
+			return nil, fmt.Errorf("source prefix: %w", err)
+		}
+		exprs = append(exprs, ipExprs...)
 	}
 
 	if r.DestinationPrefix != "" {
-		exprs = append(exprs, buildIPMatch(expr.PayloadBaseNetworkHeader, ipMatchDestination, r.DestinationPrefix, expr.CmpOpEq)...)
+		ipExprs, err := buildIPMatch(ipMatchDestination, r.DestinationPrefix)
+		if err != nil {
+			return nil, fmt.Errorf("destination prefix: %w", err)
+		}
+		exprs = append(exprs, ipExprs...)
 	}
 
-	if r.SourcePort != nil && (r.Protocol == application.ProtocolTCP || r.Protocol == application.ProtocolUDP) {
-		portBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(portBytes, uint16(*r.SourcePort))
-		exprs = append(exprs,
-			&expr.Payload{
-				DestRegister: 1,
-				Base:         expr.PayloadBaseTransportHeader,
-				Offset:       0,
-				Len:          2,
-			},
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     portBytes,
-			},
-		)
+	supportsPortMatch := r.Protocol == application.ProtocolTCP || r.Protocol == application.ProtocolUDP
+
+	if supportsPortMatch && r.SourcePort != nil {
+		portExprs, err := buildPortMatch(sourcePortOffset, *r.SourcePort, "source")
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, portExprs...)
 	}
 
-	if r.DestinationPort != nil && (r.Protocol == application.ProtocolTCP || r.Protocol == application.ProtocolUDP) {
-		portBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(portBytes, uint16(*r.DestinationPort))
-		exprs = append(exprs,
-			&expr.Payload{
-				DestRegister: 1,
-				Base:         expr.PayloadBaseTransportHeader,
-				Offset:       2,
-				Len:          2,
-			},
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     portBytes,
-			},
-		)
+	if supportsPortMatch && r.DestinationPort != nil {
+		portExprs, err := buildPortMatch(destinationPortOffset, *r.DestinationPort, "destination")
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, portExprs...)
 	}
 
 	verdictKind, ok := actionToVerdict[r.Action]
 	if !ok {
-		verdictKind = expr.VerdictDrop
+		return nil, fmt.Errorf("unsupported action: %d", r.Action)
 	}
 	exprs = append(exprs, &expr.Verdict{Kind: verdictKind})
 
-	return exprs
+	return exprs, nil
 }
 
-func buildIPMatch(base expr.PayloadBase, matchType ipMatchType, prefix string, op expr.CmpOp) []expr.Any {
-	ip, ipNet, err := net.ParseCIDR(prefix)
-	if err != nil {
-		return nil
+func buildPortMatch(offset uint32, port uint32, label string) ([]expr.Any, error) {
+	if port > maxPort {
+		return nil, fmt.Errorf("%s port out of range: %d", label, port)
 	}
 
-	ver := detectIPVersion(ip)
-	ones, _ := ipNet.Mask.Size()
+	portBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(portBytes, uint16(port))
+
+	return []expr.Any{
+		&expr.Payload{
+			DestRegister: matchRegister,
+			Base:         expr.PayloadBaseTransportHeader,
+			Offset:       offset,
+			Len:          portLen,
+		},
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: matchRegister,
+			Data:     portBytes,
+		},
+	}, nil
+}
+
+func buildIPMatch(matchType ipMatchType, prefix string) ([]expr.Any, error) {
+	ip, ipNet, err := net.ParseCIDR(prefix)
+	if err != nil {
+		return nil, fmt.Errorf("invalid CIDR %q: %w", prefix, err)
+	}
+
+	var ipData []byte
+	var ver ipVersion
+
+	if ipData = ip.To4(); ipData != nil {
+		ver = ipv4
+	} else if ipData = ip.To16(); ipData != nil {
+		ver = ipv6
+	} else {
+		return nil, fmt.Errorf("unsupported IP version: %q", prefix)
+	}
+
+	ones, bits := ipNet.Mask.Size()
+	if bits != ver.totalBits {
+		return nil, fmt.Errorf("CIDR address/mask version mismatch: %q", prefix)
+	}
 
 	offset := ver.srcOffset
 	if matchType == ipMatchDestination {
 		offset = ver.dstOffset
 	}
 
-	var ipData []byte
-	if ver == ipv4 {
-		ipData = ip.To4()
-	} else {
-		ipData = ip.To16()
-	}
-
-	if ones == ver.totalBits || ipNet.Mask == nil {
-		return []expr.Any{
-			&expr.Payload{
-				DestRegister: 1,
-				Base:         base,
-				Offset:       offset,
-				Len:          ver.addrLen,
-			},
-			&expr.Cmp{
-				Op:       op,
-				Register: 1,
-				Data:     ipData,
-			},
-		}
-	}
-
-	mask := net.CIDRMask(ones, ver.totalBits)
-	maskedIP := ip.Mask(mask)
-	if ver == ipv4 {
-		maskedIP = maskedIP.To4()
-	}
-
-	return []expr.Any{
+	matchExprs := []expr.Any{
 		&expr.Payload{
-			DestRegister: 1,
-			Base:         base,
+			DestRegister: matchRegister,
+			Base:         expr.PayloadBaseNetworkHeader,
 			Offset:       offset,
 			Len:          ver.addrLen,
 		},
-		&expr.Bitwise{
-			SourceRegister: 1,
-			DestRegister:   1,
+	}
+
+	if ones == bits {
+		matchExprs = append(matchExprs, &expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: matchRegister,
+			Data:     ipData,
+		})
+	} else {
+		mask := net.CIDRMask(ones, ver.totalBits)
+		maskedIP := ip.Mask(mask)
+		if ver == ipv4 {
+			maskedIP = maskedIP.To4()
+		}
+
+		matchExprs = append(matchExprs, &expr.Bitwise{
+			SourceRegister: matchRegister,
+			DestRegister:   matchRegister,
 			Len:            ver.addrLen,
 			Mask:           mask,
 			Xor:            make([]byte, ver.addrLen),
-		},
-		&expr.Cmp{
-			Op:       op,
-			Register: 1,
+		})
+
+		matchExprs = append(matchExprs, &expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: matchRegister,
 			Data:     maskedIP,
-		},
+		})
 	}
+	return matchExprs, nil
 }
 
-func exprsEqual(a, b []expr.Any) bool {
+func exprsEqual(a, b []expr.Any) (bool, error) {
 	if len(a) != len(b) {
-		return false
+		return false, nil
 	}
+
 	for i := range a {
-		if fmt.Sprintf("%#v", a[i]) != fmt.Sprintf("%#v", b[i]) {
-			return false
+		aBytes, err := expr.Marshal(byte(nftables.TableFamilyINet), a[i])
+		if err != nil {
+			return false, fmt.Errorf("marshal expr a[%d]: %w", i, err)
+		}
+
+		bBytes, err := expr.Marshal(byte(nftables.TableFamilyINet), b[i])
+		if err != nil {
+			return false, fmt.Errorf("marshal expr b[%d]: %w", i, err)
+		}
+
+		if !bytes.Equal(aBytes, bBytes) {
+			return false, nil
 		}
 	}
-	return true
+
+	return true, nil
 }
