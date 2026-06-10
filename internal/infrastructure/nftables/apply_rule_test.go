@@ -1,4 +1,4 @@
-package trafficfilter
+package nftables_test
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"github.com/google/nftables"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/shamil-developer/lab-google-nft/internal/application"
+	"github.com/shamil-developer/lab-google-nft/internal/provider"
 )
 
 var _ = Describe("ApplyRule", func() {
@@ -19,10 +19,10 @@ var _ = Describe("ApplyRule", func() {
 
 	Context("при добавлении правила", func() {
 		It("должен добавить правило и выполнить flush", func() {
-			rule := application.Rule{
-				Protocol:        application.ProtocolTCP,
+			rule := provider.Rule{
+				Protocol:        provider.ProtocolTCP,
 				DestinationPort: ptrUint32(443),
-				Action:          application.ActionAllow,
+				Action:          provider.ActionAllow,
 			}
 			var addedRule *nftables.Rule
 
@@ -33,7 +33,7 @@ var _ = Describe("ApplyRule", func() {
 			})
 			env.conn.EXPECT().Flush().Return(nil)
 
-			err := env.provider.ApplyRule(env.ctx, application.ApplyRuleRequest{VNI: 100, Rule: rule})
+			err := env.provider.ApplyRule(env.ctx, provider.ApplyRuleRequest{VNI: 100, Rule: rule})
 
 			Expect(err).ToNot(HaveOccurred())
 			Expect(addedRule).ToNot(BeNil())
@@ -43,55 +43,54 @@ var _ = Describe("ApplyRule", func() {
 		})
 
 		It("должен вернуть ошибку и не добавлять дубль", func() {
-			rule := application.Rule{
-				Protocol:        application.ProtocolTCP,
+			rule := provider.Rule{
+				Protocol:        provider.ProtocolTCP,
 				DestinationPort: ptrUint32(443),
-				Action:          application.ActionAllow,
+				Action:          provider.ActionAllow,
 			}
-			existingExprs, err := buildRuleExprs(rule)
-			Expect(err).ToNot(HaveOccurred())
+			existingExprs := expectedRuleExprs(rule)
 			existingRule := &nftables.Rule{Table: env.table, Chain: env.chain, Exprs: existingExprs}
 
 			expectRuleLookup(env.conn, env.table, env.chain, []*nftables.Rule{existingRule})
 
-			err = env.provider.ApplyRule(env.ctx, application.ApplyRuleRequest{VNI: 100, Rule: rule})
+			err := env.provider.ApplyRule(env.ctx, provider.ApplyRuleRequest{VNI: 100, Rule: rule})
 
 			Expect(err).To(MatchError(ContainSubstring("rule already exists")))
 		})
 
 		It("должен вернуть ошибку и не обращаться к conn при невалидном request", func() {
-			err := env.provider.ApplyRule(env.ctx, application.ApplyRuleRequest{})
+			err := env.provider.ApplyRule(env.ctx, provider.ApplyRuleRequest{})
 
 			Expect(err).To(MatchError(ContainSubstring("validate apply rule request")))
 		})
 
 		It("должен вернуть ошибку, если не удалось получить table", func() {
 			expectedErr := errors.New("table failed")
-			rule := application.Rule{
-				Protocol: application.ProtocolICMP,
-				Action:   application.ActionDrop,
+			rule := provider.Rule{
+				Protocol: provider.ProtocolICMP,
+				Action:   provider.ActionDrop,
 			}
 			env.conn.EXPECT().
-				ListTableOfFamily(tableName(100), nftables.TableFamilyINet).
+				ListTableOfFamily(testTableName, nftables.TableFamilyINet).
 				Return(nil, expectedErr)
 
-			err := env.provider.ApplyRule(env.ctx, application.ApplyRuleRequest{VNI: 100, Rule: rule})
+			err := env.provider.ApplyRule(env.ctx, provider.ApplyRuleRequest{VNI: 100, Rule: rule})
 
 			Expect(err).To(MatchError(ContainSubstring("table failed")))
 		})
 
 		It("должен вернуть ошибку, если не удалось выполнить flush", func() {
 			expectedErr := errors.New("flush failed")
-			rule := application.Rule{
-				Protocol: application.ProtocolICMP,
-				Action:   application.ActionDrop,
+			rule := provider.Rule{
+				Protocol: provider.ProtocolICMP,
+				Action:   provider.ActionDrop,
 			}
 
 			expectRuleLookup(env.conn, env.table, env.chain, nil)
 			env.conn.EXPECT().AddRule(gomock.Any()).Return(&nftables.Rule{})
 			env.conn.EXPECT().Flush().Return(expectedErr)
 
-			err := env.provider.ApplyRule(env.ctx, application.ApplyRuleRequest{VNI: 100, Rule: rule})
+			err := env.provider.ApplyRule(env.ctx, provider.ApplyRuleRequest{VNI: 100, Rule: rule})
 
 			Expect(err).To(MatchError(ContainSubstring("flush failed")))
 		})

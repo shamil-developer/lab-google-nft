@@ -1,24 +1,25 @@
-package trafficfilter
+package nftables
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
-	"github.com/google/nftables"
-	"github.com/shamil-developer/lab-google-nft/internal/application"
+	googlenft "github.com/google/nftables"
+	"github.com/shamil-developer/lab-google-nft/internal/provider"
 )
 
-// ApplyRule добавляет новое правило фильтрации трафика
-func (p *NfrTrafficFilterProvider) ApplyRule(ctx context.Context, req application.ApplyRuleRequest) error {
+// DeleteRule удаляет существующее правило фильтрации
+func (p *NfrTrafficFilterProvider) DeleteRule(ctx context.Context, req provider.DeleteRuleRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	if err := validateApplyRuleRequest(req); err != nil {
-		return fmt.Errorf("validate apply rule request: %w", err)
+	if err := validateDeleteRuleRequest(req); err != nil {
+		return fmt.Errorf("validate delete rule request: %w", err)
 	}
 
-	table, err := p.conn.ListTableOfFamily(tableName(req.VNI), nftables.TableFamilyINet)
+	table, err := p.conn.ListTableOfFamily(tableName(req.VNI), googlenft.TableFamilyINet)
 	if err != nil {
 		return fmt.Errorf("table %s not found: %w", tableName(req.VNI), err)
 	}
@@ -38,31 +39,34 @@ func (p *NfrTrafficFilterProvider) ApplyRule(ctx context.Context, req applicatio
 		return fmt.Errorf("build rule exprs: %w", err)
 	}
 
+	var foundRule *googlenft.Rule
 	for _, r := range existingRules {
 		equal, err := exprsEqual(r.Exprs, targetExprs)
 		if err != nil {
 			return fmt.Errorf("compare rule exprs: %w", err)
 		}
 		if equal {
-			return fmt.Errorf("rule already exists")
+			foundRule = r
+			break
 		}
 	}
 
-	rule := &nftables.Rule{
-		Table: table,
-		Chain: chain,
-		Exprs: targetExprs,
+	if foundRule == nil {
+		slog.Info("rule not found, nothing to delete", "vni", req.VNI)
+		return nil
 	}
 
-	p.conn.AddRule(rule)
+	if err := p.conn.DelRule(foundRule); err != nil {
+		return fmt.Errorf("del rule: %w", err)
+	}
 	if err := p.conn.Flush(); err != nil {
-		return fmt.Errorf("flush rule: %w", err)
+		return fmt.Errorf("flush delete: %w", err)
 	}
 
 	return nil
 }
 
-func validateApplyRuleRequest(req application.ApplyRuleRequest) error {
+func validateDeleteRuleRequest(req provider.DeleteRuleRequest) error {
 	if req.VNI == 0 {
 		return fmt.Errorf("vni is required")
 	}

@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/google/nftables"
-	"github.com/shamil-developer/lab-google-nft/internal/application"
-	trafficfilter "github.com/shamil-developer/lab-google-nft/internal/infrastructure/traffic_filter"
+	googlenft "github.com/google/nftables"
+	nftables "github.com/shamil-developer/lab-google-nft/internal/infrastructure/nftables"
+	"github.com/shamil-developer/lab-google-nft/internal/provider"
 )
 
 // Функция зачистки, которую мы засунем в defer
@@ -128,50 +128,50 @@ func main() {
 
 	ctx := context.Background()
 
-	conn, err := nftables.New()
+	conn, err := googlenft.New()
 	if err != nil {
 		slog.Error("Failed to create nftables connection", "error", err)
 		return
 	}
-	filterProvider := trafficfilter.NewProviderWithConn(conn)
+	filterProvider := nftables.NewProviderWithConn(conn)
 
 	type testRule struct {
 		vni  uint32
-		rule application.Rule
+		rule provider.Rule
 	}
 
 	rules := []testRule{
 		// VRF А (VNI 100):
 		// TCP dst port 443, accept
-		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, DestinationPort: ptr(uint32(443)), Action: application.ActionAllow}},
+		{vni: 100, rule: provider.Rule{Protocol: provider.ProtocolTCP, DestinationPort: ptr(uint32(443)), Action: provider.ActionAllow}},
 		// TCP dst port 80, accept
-		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, DestinationPort: ptr(uint32(80)), Action: application.ActionAllow}},
+		{vni: 100, rule: provider.Rule{Protocol: provider.ProtocolTCP, DestinationPort: ptr(uint32(80)), Action: provider.ActionAllow}},
 		// UDP src port 53, accept
-		{vni: 100, rule: application.Rule{Protocol: application.ProtocolUDP, SourcePort: ptr(uint32(53)), Action: application.ActionAllow}},
+		{vni: 100, rule: provider.Rule{Protocol: provider.ProtocolUDP, SourcePort: ptr(uint32(53)), Action: provider.ActionAllow}},
 		// ICMP, drop
-		{vni: 100, rule: application.Rule{Protocol: application.ProtocolICMP, Action: application.ActionDrop}},
+		{vni: 100, rule: provider.Rule{Protocol: provider.ProtocolICMP, Action: provider.ActionDrop}},
 		// TCP src 10.0.0.0/24, accept
-		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, SourcePrefix: "10.0.0.0/24", Action: application.ActionAllow}},
+		{vni: 100, rule: provider.Rule{Protocol: provider.ProtocolTCP, SourcePrefix: "10.0.0.0/24", Action: provider.ActionAllow}},
 		// UDP dst 192.168.1.0/24, drop
-		{vni: 100, rule: application.Rule{Protocol: application.ProtocolUDP, DestinationPrefix: "192.168.1.0/24", Action: application.ActionDrop}},
+		{vni: 100, rule: provider.Rule{Protocol: provider.ProtocolUDP, DestinationPrefix: "192.168.1.0/24", Action: provider.ActionDrop}},
 		// TCP src port 8080 + dst 10.10.0.0/16, accept
-		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, SourcePort: ptr(uint32(8080)), DestinationPrefix: "10.10.0.0/16", Action: application.ActionAllow}},
+		{vni: 100, rule: provider.Rule{Protocol: provider.ProtocolTCP, SourcePort: ptr(uint32(8080)), DestinationPrefix: "10.10.0.0/16", Action: provider.ActionAllow}},
 		// TCP dst port 22, accept
-		{vni: 100, rule: application.Rule{Protocol: application.ProtocolTCP, DestinationPort: ptr(uint32(22)), Action: application.ActionAllow}},
+		{vni: 100, rule: provider.Rule{Protocol: provider.ProtocolTCP, DestinationPort: ptr(uint32(22)), Action: provider.ActionAllow}},
 
 		// VRF Б (VNI 200):
 		// TCP dst port 443, accept
-		{vni: 200, rule: application.Rule{Protocol: application.ProtocolTCP, DestinationPort: ptr(uint32(443)), Action: application.ActionAllow}},
+		{vni: 200, rule: provider.Rule{Protocol: provider.ProtocolTCP, DestinationPort: ptr(uint32(443)), Action: provider.ActionAllow}},
 		// UDP dst port 1194, accept
-		{vni: 200, rule: application.Rule{Protocol: application.ProtocolUDP, DestinationPort: ptr(uint32(1194)), Action: application.ActionAllow}},
+		{vni: 200, rule: provider.Rule{Protocol: provider.ProtocolUDP, DestinationPort: ptr(uint32(1194)), Action: provider.ActionAllow}},
 		// TCP src 172.16.0.0/12, drop
-		{vni: 200, rule: application.Rule{Protocol: application.ProtocolTCP, SourcePrefix: "172.16.0.0/12", Action: application.ActionDrop}},
+		{vni: 200, rule: provider.Rule{Protocol: provider.ProtocolTCP, SourcePrefix: "172.16.0.0/12", Action: provider.ActionDrop}},
 	}
 
 	slog.Info("--- Начинаем создание набора правил ---")
 
 	for i, tr := range rules {
-		err := filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{VNI: tr.vni, Rule: tr.rule})
+		err := filterProvider.ApplyRule(ctx, provider.ApplyRuleRequest{VNI: tr.vni, Rule: tr.rule})
 		if err != nil {
 			slog.Error("ApplyRule failed", "num", i+1, "vni", tr.vni, "error", err)
 		} else {
@@ -196,12 +196,12 @@ func main() {
 	}
 
 	// Пробуем добавить такое же правило повторно — должны поймать ошибку "rule already exists"
-	err = filterProvider.ApplyRule(ctx, application.ApplyRuleRequest{
+	err = filterProvider.ApplyRule(ctx, provider.ApplyRuleRequest{
 		VNI: 100,
-		Rule: application.Rule{
-			Protocol:        application.ProtocolTCP,
+		Rule: provider.Rule{
+			Protocol:        provider.ProtocolTCP,
 			DestinationPort: ptr(uint32(443)),
-			Action:          application.ActionAllow,
+			Action:          provider.ActionAllow,
 		},
 	})
 	if err != nil {
@@ -226,12 +226,12 @@ func main() {
 		return
 	}
 
-	duplicateRule := application.DeleteRuleRequest{
+	duplicateRule := provider.DeleteRuleRequest{
 		VNI: 100,
-		Rule: application.Rule{
-			Protocol:        application.ProtocolTCP,
+		Rule: provider.Rule{
+			Protocol:        provider.ProtocolTCP,
 			DestinationPort: ptr(uint32(443)),
-			Action:          application.ActionAllow,
+			Action:          provider.ActionAllow,
 		},
 	}
 
@@ -284,7 +284,7 @@ func main() {
 	}
 
 	slog.Info("--- Чистим все firewall-правила для VNI 100 ---")
-	if err := filterProvider.CleanupVRFRules(ctx, application.CleanupVRFRulesRequest{VNI: 100}); err != nil {
+	if err := filterProvider.CleanupVRFRules(ctx, provider.CleanupVRFRulesRequest{VNI: 100}); err != nil {
 		slog.Error("CleanupVRFRules failed", "error", err)
 	} else {
 		slog.Info("CleanupVRFRules для VNI 100 завершён успешно")

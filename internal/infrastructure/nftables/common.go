@@ -1,4 +1,4 @@
-package trafficfilter
+package nftables
 
 import (
 	"bytes"
@@ -6,21 +6,21 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/google/nftables"
+	googlenft "github.com/google/nftables"
 	"github.com/google/nftables/expr"
-	"github.com/shamil-developer/lab-google-nft/internal/application"
+	"github.com/shamil-developer/lab-google-nft/internal/provider"
 	"golang.org/x/sys/unix"
 )
 
-var actionToVerdict = map[application.Action]expr.VerdictKind{
-	application.ActionAllow: expr.VerdictAccept,
-	application.ActionDrop:  expr.VerdictDrop,
+var actionToVerdict = map[provider.Action]expr.VerdictKind{
+	provider.ActionAllow: expr.VerdictAccept,
+	provider.ActionDrop:  expr.VerdictDrop,
 }
 
-var protoToByte = map[application.Protocol]byte{
-	application.ProtocolTCP:  unix.IPPROTO_TCP,
-	application.ProtocolUDP:  unix.IPPROTO_UDP,
-	application.ProtocolICMP: unix.IPPROTO_ICMP,
+var protoToByte = map[provider.Protocol]byte{
+	provider.ProtocolTCP:  unix.IPPROTO_TCP,
+	provider.ProtocolUDP:  unix.IPPROTO_UDP,
+	provider.ProtocolICMP: unix.IPPROTO_ICMP,
 }
 
 const (
@@ -55,10 +55,10 @@ const (
 	ipMatchDestination
 )
 
-func buildRuleExprs(r application.Rule) ([]expr.Any, error) {
+func buildRuleExprs(r provider.Rule) ([]expr.Any, error) {
 	var exprs []expr.Any
 
-	if r.Protocol != application.ProtocolUnspecified {
+	if r.Protocol != provider.ProtocolUnspecified {
 		protoByte, ok := protoToByte[r.Protocol]
 		if !ok {
 			return nil, fmt.Errorf("unsupported protocol: %d", r.Protocol)
@@ -90,7 +90,7 @@ func buildRuleExprs(r application.Rule) ([]expr.Any, error) {
 		exprs = append(exprs, ipExprs...)
 	}
 
-	supportsPortMatch := r.Protocol == application.ProtocolTCP || r.Protocol == application.ProtocolUDP
+	supportsPortMatch := r.Protocol == provider.ProtocolTCP || r.Protocol == provider.ProtocolUDP
 
 	if supportsPortMatch && r.SourcePort != nil {
 		portExprs, err := buildPortMatch(sourcePortOffset, *r.SourcePort, "source")
@@ -212,12 +212,12 @@ func exprsEqual(a, b []expr.Any) (bool, error) {
 	}
 
 	for i := range a {
-		aBytes, err := expr.Marshal(byte(nftables.TableFamilyINet), a[i])
+		aBytes, err := expr.Marshal(byte(googlenft.TableFamilyINet), a[i])
 		if err != nil {
 			return false, fmt.Errorf("marshal expr a[%d]: %w", i, err)
 		}
 
-		bBytes, err := expr.Marshal(byte(nftables.TableFamilyINet), b[i])
+		bBytes, err := expr.Marshal(byte(googlenft.TableFamilyINet), b[i])
 		if err != nil {
 			return false, fmt.Errorf("marshal expr b[%d]: %w", i, err)
 		}
@@ -230,12 +230,12 @@ func exprsEqual(a, b []expr.Any) (bool, error) {
 	return true, nil
 }
 
-func validateRule(r application.Rule) error {
+func validateRule(r provider.Rule) error {
 	if _, ok := actionToVerdict[r.Action]; !ok {
 		return fmt.Errorf("unsupported action: %d", r.Action)
 	}
 
-	if r.Protocol == application.ProtocolUnspecified {
+	if r.Protocol == provider.ProtocolUnspecified {
 		return fmt.Errorf("protocol is required")
 	}
 
@@ -274,12 +274,12 @@ func validateCIDR(value string) error {
 	return nil
 }
 
-func validatePort(port *uint32, protocol application.Protocol, label string) error {
+func validatePort(port *uint32, protocol provider.Protocol, label string) error {
 	if port == nil {
 		return nil
 	}
 
-	if protocol != application.ProtocolTCP && protocol != application.ProtocolUDP {
+	if protocol != provider.ProtocolTCP && protocol != provider.ProtocolUDP {
 		return fmt.Errorf("%s port can be used only with tcp or udp protocol", label)
 	}
 
