@@ -15,6 +15,10 @@ func (p *NfrTrafficFilterProvider) CleanupVRFRules(ctx context.Context, req appl
 		return err
 	}
 
+	if err := validateCleanupVRFRulesRequest(req); err != nil {
+		return fmt.Errorf("validate cleanup vrf rules request: %w", err)
+	}
+
 	table, err := p.conn.ListTableOfFamily(tableName(req.VNI), nftables.TableFamilyINet)
 	if err != nil {
 		return fmt.Errorf("table %s not found: %w", tableName(req.VNI), err)
@@ -42,6 +46,14 @@ func (p *NfrTrafficFilterProvider) CleanupVRFRules(ctx context.Context, req appl
 
 	if err := p.conn.Flush(); err != nil {
 		return fmt.Errorf("flush cleanup: %w", err)
+	}
+
+	return nil
+}
+
+func validateCleanupVRFRulesRequest(req application.CleanupVRFRulesRequest) error {
+	if req.VNI == 0 {
+		return fmt.Errorf("vni is required")
 	}
 
 	return nil

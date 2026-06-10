@@ -3,6 +3,7 @@ module github.com/shamil-developer/lab-google-nft
 go 1.26.3
 
 require (
+	github.com/golang/mock v1.6.0
 	github.com/google/nftables v0.3.0
 	github.com/onsi/ginkgo/v2 v2.29.0
 	github.com/onsi/gomega v1.41.0

@@ -98,10 +98,13 @@ var _ = Describe("Common", func() {
 
 		It("должен собрать прямое сравнение для exact IPv4 source address", func() {
 			rule := application.Rule{
+				Protocol:     application.ProtocolTCP,
 				SourcePrefix: "10.0.0.1/32",
 				Action:       application.ActionAllow,
 			}
 			expected := []expr.Any{
+				metaL4Proto(),
+				cmp([]byte{unix.IPPROTO_TCP}),
 				networkPayload(ipv4.srcOffset, ipv4.addrLen),
 				cmp([]byte{10, 0, 0, 1}),
 				verdict(expr.VerdictAccept),
@@ -113,16 +116,15 @@ var _ = Describe("Common", func() {
 			expectExprsEqual(actual, expected)
 		})
 
-		It("должен игнорировать port-поля для ICMP", func() {
+		It("должен собрать выражения для protocol-only правила", func() {
 			rule := application.Rule{
-				Protocol:        application.ProtocolICMP,
-				DestinationPort: ptrUint32(443),
-				Action:          application.ActionAllow,
+				Protocol: application.ProtocolICMP,
+				Action:   application.ActionDrop,
 			}
 			expected := []expr.Any{
 				metaL4Proto(),
 				cmp([]byte{unix.IPPROTO_ICMP}),
-				verdict(expr.VerdictAccept),
+				verdict(expr.VerdictDrop),
 			}
 
 			actual, err := buildRuleExprs(rule)
@@ -174,6 +176,59 @@ var _ = Describe("Common", func() {
 
 			for _, tc := range cases {
 				_, err := buildRuleExprs(tc.rule)
+
+				Expect(err).To(MatchError(ContainSubstring(tc.expectedErr)), tc.name)
+			}
+		})
+	})
+
+	Context("при валидации правила", func() {
+		It("должен пропустить protocol-only правило", func() {
+			rule := application.Rule{
+				Protocol: application.ProtocolICMP,
+				Action:   application.ActionDrop,
+			}
+
+			err := validateRule(rule)
+
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("должен вернуть ошибку для невалидного правила", func() {
+			cases := []struct {
+				name        string
+				rule        application.Rule
+				expectedErr string
+			}{
+				{
+					name: "protocol не задан",
+					rule: application.Rule{
+						Action: application.ActionAllow,
+					},
+					expectedErr: "protocol is required",
+				},
+				{
+					name: "port указан для ICMP",
+					rule: application.Rule{
+						Protocol:        application.ProtocolICMP,
+						DestinationPort: ptrUint32(443),
+						Action:          application.ActionAllow,
+					},
+					expectedErr: "destination port can be used only with tcp or udp protocol",
+				},
+				{
+					name: "невалидный CIDR",
+					rule: application.Rule{
+						Protocol:     application.ProtocolTCP,
+						SourcePrefix: "10.0.0.0/33",
+						Action:       application.ActionAllow,
+					},
+					expectedErr: "source prefix",
+				},
+			}
+
+			for _, tc := range cases {
+				err := validateRule(tc.rule)
 
 				Expect(err).To(MatchError(ContainSubstring(tc.expectedErr)), tc.name)
 			}

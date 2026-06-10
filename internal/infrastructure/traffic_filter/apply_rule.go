@@ -14,6 +14,10 @@ func (p *NfrTrafficFilterProvider) ApplyRule(ctx context.Context, req applicatio
 		return err
 	}
 
+	if err := validateApplyRuleRequest(req); err != nil {
+		return fmt.Errorf("validate apply rule request: %w", err)
+	}
+
 	table, err := p.conn.ListTableOfFamily(tableName(req.VNI), nftables.TableFamilyINet)
 	if err != nil {
 		return fmt.Errorf("table %s not found: %w", tableName(req.VNI), err)
@@ -56,4 +60,12 @@ func (p *NfrTrafficFilterProvider) ApplyRule(ctx context.Context, req applicatio
 	}
 
 	return nil
+}
+
+func validateApplyRuleRequest(req application.ApplyRuleRequest) error {
+	if req.VNI == 0 {
+		return fmt.Errorf("vni is required")
+	}
+
+	return validateRule(req.Rule)
 }

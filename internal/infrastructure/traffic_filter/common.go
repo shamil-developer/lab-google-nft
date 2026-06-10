@@ -229,3 +229,63 @@ func exprsEqual(a, b []expr.Any) (bool, error) {
 
 	return true, nil
 }
+
+func validateRule(r application.Rule) error {
+	if _, ok := actionToVerdict[r.Action]; !ok {
+		return fmt.Errorf("unsupported action: %d", r.Action)
+	}
+
+	if r.Protocol == application.ProtocolUnspecified {
+		return fmt.Errorf("protocol is required")
+	}
+
+	if _, ok := protoToByte[r.Protocol]; !ok {
+		return fmt.Errorf("unsupported protocol: %d", r.Protocol)
+	}
+
+	if r.SourcePrefix != "" {
+		if err := validateCIDR(r.SourcePrefix); err != nil {
+			return fmt.Errorf("source prefix: %w", err)
+		}
+	}
+
+	if r.DestinationPrefix != "" {
+		if err := validateCIDR(r.DestinationPrefix); err != nil {
+			return fmt.Errorf("destination prefix: %w", err)
+		}
+	}
+
+	if err := validatePort(r.SourcePort, r.Protocol, "source"); err != nil {
+		return err
+	}
+	if err := validatePort(r.DestinationPort, r.Protocol, "destination"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateCIDR(value string) error {
+	_, _, err := net.ParseCIDR(value)
+	if err != nil {
+		return fmt.Errorf("invalid CIDR %q: %w", value, err)
+	}
+
+	return nil
+}
+
+func validatePort(port *uint32, protocol application.Protocol, label string) error {
+	if port == nil {
+		return nil
+	}
+
+	if protocol != application.ProtocolTCP && protocol != application.ProtocolUDP {
+		return fmt.Errorf("%s port can be used only with tcp or udp protocol", label)
+	}
+
+	if *port > maxPort {
+		return fmt.Errorf("%s port out of range: %d", label, *port)
+	}
+
+	return nil
+}

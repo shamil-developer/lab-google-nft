@@ -15,6 +15,10 @@ func (p *NfrTrafficFilterProvider) DeleteRule(ctx context.Context, req applicati
 		return err
 	}
 
+	if err := validateDeleteRuleRequest(req); err != nil {
+		return fmt.Errorf("validate delete rule request: %w", err)
+	}
+
 	table, err := p.conn.ListTableOfFamily(tableName(req.VNI), nftables.TableFamilyINet)
 	if err != nil {
 		return fmt.Errorf("table %s not found: %w", tableName(req.VNI), err)
@@ -60,4 +64,12 @@ func (p *NfrTrafficFilterProvider) DeleteRule(ctx context.Context, req applicati
 	}
 
 	return nil
+}
+
+func validateDeleteRuleRequest(req application.DeleteRuleRequest) error {
+	if req.VNI == 0 {
+		return fmt.Errorf("vni is required")
+	}
+
+	return validateRule(req.Rule)
 }
